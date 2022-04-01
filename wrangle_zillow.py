@@ -1,6 +1,9 @@
 import pandas as pd
+import numpy as np
 from env import get_db_url
 import os
+from sklearn.model_selection import train_test_split
+import sklearn.preprocessing
 
 def wrangle_zillow():
     """ Acquires the Zillow housing data from the SQL database or a cached CSV file. Renames columns and outputs data as a Pandas DataFrame"""
@@ -40,6 +43,7 @@ def wrangle_zillow():
                 AND transactiondate BETWEEN '2017-01-01' and '2017-12-31';
             """
         df = pd.read_sql(query, get_db_url('zillow'))
+        
         # Drop unnecessary foreign keys
         df = df.drop(columns = ['parcel_id_max_date','max_date','parcelid_pred', 'typeconstructiontypeid','storytypeid','heatingorsystemtypeid','buildingclasstypeid','architecturalstyletypeid','architecturalstyletypeid','airconditioningtypeid','propertylandusetypeid'])
         df.to_csv('zillow_2017.csv', index=False)
@@ -60,9 +64,21 @@ def wrangle_zillow():
     return df
 
 def handle_missing_zillow_values(df):
-    """ Specific to Zillow dataset """
-    df_nulls_removed = df
+    """ Specific to Zillow dataset. Filters to single unit properties and deals with null values."""
     
+    # Just want single unit properties
+    
+    # Filter out anything other than unit count = 1 and nans
+    df = df[(df.unitcnt==1)|(df.unitcnt.isna())]
+    
+    # Keep properties that should be single units
+    properties_to_keep = ['Single Family Residential','Condominum','Mobile Home','Manufactured, Modular, Prefabricated Homes','Residential General','Townhouse',np.nan]
+    df = df[df.apply(lambda row: row.propertylandusedesc in properties_to_keep, axis=1)]
+    
+    # First pass on removing missing values
+    df_nulls_removed = handle_missing_values(df, prop_required_column=0.3, prop_required_row=0.00002)
+    
+    # Fill na values and drop specific columns based on exploring nans
     df_nulls_removed['garage'] = df_nulls_removed['garage'].fillna(0)
     df_nulls_removed['garagetotalsqft'] = df_nulls_removed['garagetotalsqft'].fillna('No garage')
     df_nulls_removed['poolsizesum'] = df_nulls_removed['poolsizesum'].fillna('No pool')
@@ -72,7 +88,7 @@ def handle_missing_zillow_values(df):
     df_nulls_removed['condition'] = df_nulls_removed['condition'].fillna("Not available")
     df_nulls_removed['yardbuildingsqft17'] = df_nulls_removed['yardbuildingsqft17'].fillna("No Patio Information")
     df_nulls_removed['yardbuildingsqft26'] = df_nulls_removed['yardbuildingsqft26'].fillna("No Yard Building")
-    df_nulls_removed = df_nulls_removed.drop(columns = ['calculatedbathnbr','finishedsquarefeet13','finishedsquarefeet50','finishedsquarefeet6','finishedsquarefeet12','finishedfloor1squarefeet'])
+    df_nulls_removed = df_nulls_removed.drop(columns = ['regionidneighborhood','calculatedbathnbr','finishedsquarefeet13','finishedsquarefeet50','finishedsquarefeet6','finishedsquarefeet12','finishedfloor1squarefeet'])
     
     # Fill in binary values with 0s
     for col in df_nulls_removed.columns:
@@ -88,6 +104,9 @@ def handle_missing_zillow_values(df):
         elif 'number' in col:
             df_nulls_removed[col] = df_nulls_removed[col].fillna(0)
             
+    # For now, just remove remaining null values
+    df_nulls_removed = df_nulls_removed.dropna()
+            
     return df_nulls_removed
 
 def handle_missing_values(df, prop_required_column, prop_required_row):
@@ -96,7 +115,7 @@ def handle_missing_values(df, prop_required_column, prop_required_row):
     Returns a df without the columns and rows that were dropped. """
     
     # Drop columns with pct of missing rows above threshold
-
+    print("For threshold based dropping: ")
     print(df.shape, " original shape")
     df = df.dropna(thresh = int((prop_required_row)*len(df)), axis=1, inplace=False)
     print(df.shape, " shape after dropping columns with prop required rows below theshold")
@@ -187,4 +206,69 @@ def add_lower_outlier_columns(df, k, describe = False):
             data = df[col][df[col] > 0]
             print(data.describe())
             
+    return df
+
+def split_data(df, train_size_vs_train_test = 0.8, train_size_vs_train_val = 0.7, random_state = 123):
+    """Splits the inputted dataframe into 3 datasets for train, validate and test (in that order).
+    Can specific as arguments the percentage of the train/val set vs test (default 0.8) and the percentage of the train size vs train/val (default 0.7). Default values results in following:
+    Train: 0.56
+    Validate: 0.24
+    Test: 0.2"""
+    train_val, test = train_test_split(df, train_size=train_size_vs_train_test, random_state=123)
+    train, validate = train_test_split(train_val, train_size=train_size_vs_train_val, random_state=123)
+    
+    train_size = train_size_vs_train_test*train_size_vs_train_val
+    test_size = 1 - train_size_vs_train_test
+    validate_size = 1-test_size-train_size
+    
+    print(f"Data split as follows: Train {train_size:.2%}, Validate {validate_size:.2%}, Test {test_size:.2%}")
+    
+    return train, validate, test
+
+def scale_data(train, validate, test, features_to_scale):
+    """Scales data using MinMax Scaler. 
+    Accepts train, validate, and test datasets as inputs as well as a list of the features to scale. 
+    Returns dataframe with scaled values added on as columns"""
+    
+    # Fit the scaler to train data only
+    scaler = sklearn.preprocessing.MinMaxScaler()
+    scaler.fit(train[features_to_scale])
+    
+    # Generate a list of the new column names with _scaled added on
+    scaled_columns = [col+"_scaled" for col in features_to_scale]
+    
+    # Transform the separate datasets using the scaler learned from train
+    scaled_train = scaler.transform(train[features_to_scale])
+    scaled_validate = scaler.transform(validate[features_to_scale])
+    scaled_test = scaler.transform(test[features_to_scale])
+    
+    # Concatenate the scaled data to the original unscaled data
+    train_scaled = pd.concat([train, pd.DataFrame(scaled_train,index=train.index, columns = scaled_columns)],axis=1)
+    validate_scaled = pd.concat([validate, pd.DataFrame(scaled_validate,index=validate.index, columns = scaled_columns)],axis=1)
+    test_scaled = pd.concat([test, pd.DataFrame(scaled_test,index=test.index, columns = scaled_columns)],axis=1)
+
+    return train_scaled, validate_scaled, test_scaled
+
+def remove_outliers(df, k, col_list):
+    ''' Removes outliers based on multiple of IQR. Accepts as arguments the dataframe, the k value for number of IQR to use as threshold, and the list of columns. Outputs a dataframe without the outliers.
+    '''
+    # Create a column that will label our rows as containing an outlier value or not
+    num_obs = df.shape[0]
+    df['outlier'] = False
+    for col in col_list:
+
+        q1, q3 = df[col].quantile([.25, .75])  # get quartiles
+        
+        iqr = q3 - q1   # calculate interquartile range
+        
+        upper_bound = q3 + k * iqr   # get upper bound
+        lower_bound = q1 - k * iqr   # get lower bound
+
+        # update the outlier label any time that the value is outside of boundaries
+        df['outlier'] = np.where(((df[col] < lower_bound) | (df[col] > upper_bound)) & (df.outlier == False), True, df.outlier)
+    
+    df = df[df.outlier == False]
+    df.drop(columns=['outlier'], inplace=True)
+    print(f"Number of observations removed: {num_obs - df.shape[0]}")
+        
     return df
