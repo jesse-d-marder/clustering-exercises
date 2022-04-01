@@ -40,7 +40,8 @@ def wrangle_zillow():
                 AND transactiondate BETWEEN '2017-01-01' and '2017-12-31';
             """
         df = pd.read_sql(query, get_db_url('zillow'))
-        df = df.drop(columns = ['parcel_id_max_date','max_date','parcelid_pred'])
+        # Drop unnecessary foreign keys
+        df = df.drop(columns = ['parcel_id_max_date','max_date','parcelid_pred', 'typeconstructiontypeid','storytypeid','heatingorsystemtypeid','buildingclasstypeid','architecturalstyletypeid','architecturalstyletypeid','airconditioningtypeid','propertylandusetypeid'])
         df.to_csv('zillow_2017.csv', index=False)
     
     # Prepare the data for exploration and modeling
@@ -58,7 +59,53 @@ def wrangle_zillow():
     
     return df
 
-import pandas as pd
+def handle_missing_zillow_values(df):
+    """ Specific to Zillow dataset """
+    df_nulls_removed = df
+    
+    df_nulls_removed['garage'] = df_nulls_removed['garage'].fillna(0)
+    df_nulls_removed['garagetotalsqft'] = df_nulls_removed['garagetotalsqft'].fillna('No garage')
+    df_nulls_removed['poolsizesum'] = df_nulls_removed['poolsizesum'].fillna('No pool')
+    df_nulls_removed['basementsqft'] = df_nulls_removed['basementsqft'].fillna('No basement information')
+    df_nulls_removed['threequarterbathnbr'] = df_nulls_removed['threequarterbathnbr'].fillna(0)
+    df_nulls_removed['taxdelinquencyyear'] = df_nulls_removed['taxdelinquencyyear'].fillna("Assumed Not Delinquent")
+    df_nulls_removed['condition'] = df_nulls_removed['condition'].fillna("Not available")
+    df_nulls_removed['yardbuildingsqft17'] = df_nulls_removed['yardbuildingsqft17'].fillna("No Patio Information")
+    df_nulls_removed['yardbuildingsqft26'] = df_nulls_removed['yardbuildingsqft26'].fillna("No Yard Building")
+    df_nulls_removed = df_nulls_removed.drop(columns = ['calculatedbathnbr','finishedsquarefeet13','finishedsquarefeet50','finishedsquarefeet6','finishedsquarefeet12','finishedfloor1squarefeet'])
+    
+    # Fill in binary values with 0s
+    for col in df_nulls_removed.columns:
+        if df_nulls_removed[col].nunique() == 1:
+            df_nulls_removed[col] = df_nulls_removed[col].fillna('None')
+    
+    # Fill in count, number, and desc values with 0s and not specified
+    for col in df_nulls_removed.columns:
+        if 'desc' in col:
+            df_nulls_removed[col] = df_nulls_removed[col].fillna('Not Specified')
+        elif 'cnt' in col:
+            df_nulls_removed[col] = df_nulls_removed[col].fillna(0)
+        elif 'number' in col:
+            df_nulls_removed[col] = df_nulls_removed[col].fillna(0)
+            
+    return df_nulls_removed
+
+def handle_missing_values(df, prop_required_column, prop_required_row):
+    """ Drops columns and rows from df that have fewer values than required by the 
+    arguments prop_required_column and prop_required_row. First drops columns then drops rows. 
+    Returns a df without the columns and rows that were dropped. """
+    
+    # Drop columns with pct of missing rows above threshold
+
+    print(df.shape, " original shape")
+    df = df.dropna(thresh = int((prop_required_row)*len(df)), axis=1, inplace=False)
+    print(df.shape, " shape after dropping columns with prop required rows below theshold")
+    
+    # Drop rows with pct of missing columns above threshold
+    df = df.dropna(thresh = int(prop_required_column*len(df.columns)), inplace=False)
+    print(df.shape, " shape after dropping rows with prop required columns below threshold")
+    
+    return df
 
 
 def nulls_by_row(df):
