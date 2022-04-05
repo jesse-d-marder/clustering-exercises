@@ -80,15 +80,17 @@ def handle_missing_zillow_values(df):
     
     # Fill na values and drop specific columns based on exploring nans
     df_nulls_removed['garage'] = df_nulls_removed['garage'].fillna(0)
-    df_nulls_removed['garagetotalsqft'] = df_nulls_removed['garagetotalsqft'].fillna('No garage')
-    df_nulls_removed['poolsizesum'] = df_nulls_removed['poolsizesum'].fillna('No pool')
-    df_nulls_removed['basementsqft'] = df_nulls_removed['basementsqft'].fillna('No basement information')
+    df_nulls_removed['garagetotalsqft'] = df_nulls_removed['garagetotalsqft'].fillna(0) # 'No garage'
+    df_nulls_removed['poolsizesum'] = df_nulls_removed['poolsizesum'].fillna(0)# 'No pool'
+    df_nulls_removed['basementsqft'] = df_nulls_removed['basementsqft'].fillna(0) # 'No basement information'
     df_nulls_removed['threequarterbathnbr'] = df_nulls_removed['threequarterbathnbr'].fillna(0)
-    df_nulls_removed['taxdelinquencyyear'] = df_nulls_removed['taxdelinquencyyear'].fillna("Assumed Not Delinquent")
-    df_nulls_removed['condition'] = df_nulls_removed['condition'].fillna("Not available")
-    df_nulls_removed['yardbuildingsqft17'] = df_nulls_removed['yardbuildingsqft17'].fillna("No Patio Information")
-    df_nulls_removed['yardbuildingsqft26'] = df_nulls_removed['yardbuildingsqft26'].fillna("No Yard Building")
+    df_nulls_removed['taxdelinquencyyear'] = df_nulls_removed['taxdelinquencyyear'].fillna(0) # "Assumed Not Delinquent"
+    df_nulls_removed['condition'] = df_nulls_removed['condition'].fillna(-1) # "Not available"
+    df_nulls_removed['yardbuildingsqft17'] = df_nulls_removed['yardbuildingsqft17'].fillna(0) # "No Patio Information"
+    df_nulls_removed['yardbuildingsqft26'] = df_nulls_removed['yardbuildingsqft26'].fillna(0) # "No Yard Building"
     df_nulls_removed = df_nulls_removed.drop(columns = ['regionidneighborhood','calculatedbathnbr','finishedsquarefeet13','finishedsquarefeet50','finishedsquarefeet6','finishedsquarefeet12','finishedfloor1squarefeet'])
+    # Make a column for the county based on FIPS
+    df_nulls_removed["county"] = np.select([df_nulls_removed.fips == 6037, df_nulls_removed.fips==6059, df_nulls_removed.fips == 6111],["Los Angeles County", "Orange County", "Ventura County"])
     
     # Fill in binary values with 0s
     for col in df_nulls_removed.columns:
